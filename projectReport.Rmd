@@ -1,0 +1,182 @@
+---
+title: "Practical Machine Learning: Course Project"
+author: "Ajit Nambissan"
+date: "22 July 2016"
+output: 
+  html_document:
+    keep_md: true
+    
+---
+
+#1.  Synopsis
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity 
+relatively inexpensively. One thing that people regularly do is quantify how much of a particular activity they do, 
+but they rarely quantify how well they do it. 
+
+In this project, our goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants 
+and predict the manner in which they are performing the unilateral bicep curls. 
+
+The 5 possible outcomes are that the curls are being performed:
+
+    A: exactly according to the specification
+    B: throwing the elbows to the front
+    C: lifting the dumbbell only halfway
+    D: lowering the dumbbell only halfway
+    E: throwing the hips to the front
+
+This report describes how the prediction model is built, how it is cross validated, evaluation of the expected out of sample error, 
+and explaining the reasons of the choices made to build this model. The prediction model will then be used to predict 20 different 
+test cases.
+
+**The Data**
+
+The training data for this project are available [here]( https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv )
+
+The test data are available [here]( https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv ).
+
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har. 
+
+The training and testing data was downloaded and made available in the working directory.
+
+
+#2. Data Processing
+
+**Required Libraries**
+
+```{r warning=FALSE, message=FALSE, results="hide"}
+library(caret)
+library(randomForest)
+library(rpart)
+```  
+
+
+##2.1   Loading the Data and clean up
+
+```{r}
+training <- read.csv(file="pml-training.csv", header=TRUE, na.strings=c("NA", "#DIV/0!",""))
+testing <- read.csv(file="pml-testing.csv", header=TRUE, na.strings=c("NA", "#DIV/0!",""))
+dim(training)
+dim(testing)
+```
+
+
+**Remove columns that are not significant for this analysis**
+
+There are many columns that have a high percentage of NA values and will not contribute much to our prediction model. Such columns are removed. 
+For the same reasons, columns like raw_timestamp, new_window etc. are also removed.  
+```{r}
+training <- training[, colSums(is.na(training)) == 0]
+testing <- testing[, colSums(is.na(testing)) == 0]
+
+idxColsRemove <- grepl("^X|user_name|timestamp|window", names(training))
+training <- training[, !idxColsRemove]
+
+idxColsRemove <- grepl("^X|user_name|timestamp|window", names(testing))
+testing <- testing[, !idxColsRemove]
+
+dim(training)
+dim(testing)
+
+```
+
+
+**Check for Non-Zero Variance**
+
+Look for co-variates that have vear zero variance and remve them.
+
+```{r}
+ nsv <- nearZeroVar(training, saveMetrics = T)
+ nsv
+```
+
+Since the nsv for all columns is FALSE, there is no need to drop any more columns. 
+
+
+
+##2.2  Partitioning the Training data
+
+We have a training set containing 19622 observations and a testing set with 20 observations. 
+
+Since we have a large number of training observations, the training data is partitioned into training and validation sets in 70-30 ratio.
+The prediction model will be developed using the training set and the validation set will be used to provide feedback on how well the model fits the data.
+This feedback will be used to improve the model, if necessary.
+
+```{r}
+set.seed(22072016)
+trainingIdx <- createDataPartition(y=training$classe, p=0.7, list=FALSE)
+trainingSet <- training[trainingIdx, ]
+validationSet <- training[-trainingIdx, ]
+dim(trainingSet)
+dim(validationSet)
+```
+
+
+#3. Building the Prediction Model
+
+
+##3.1   Features Selected
+
+These are the features selected for the modelling:
+
+```{r}
+result <- which(names(trainingSet) == "classe")
+features <- names(trainingSet[,-result])
+
+features
+```
+
+
+##3.2   Training the Model
+
+We will try building the model using three different modelling algorithms and select the one that produces the most accurate predictions 
+for the validation set. This selected model will then be used to predict the outcomes for the 20 observations in the testing set.
+
+
+```{r warning=FALSE, message=FALSE}
+
+set.seed(1234)
+
+mdlControl <- trainControl(method='cv', number = 3)
+
+#CART model
+mCART <- train(classe ~ ., data=trainingSet, method="rpart", trControl=mdlControl)
+pCART <- predict(mCART, newdata=validationSet)
+cmCART <- confusionMatrix(pCART, validationSet$classe)
+
+#GBM model
+mGBM <- train(classe ~ ., data=trainingSet, method="gbm", verbose=FALSE, trControl=mdlControl)
+pGBM <- predict(mGBM, newdata=validationSet)
+cmGBM <- confusionMatrix(pGBM, validationSet$classe)
+
+
+#Random Forest Model
+mRF <- train(classe ~ ., data=trainingSet, method="rf", trControl=mdlControl, ntree=100)
+pRF <- predict(mRF, newdata=validationSet)
+cmRF <- confusionMatrix(pRF, validationSet$classe)
+
+modelCompare <- data.frame(cmCART$overall, cmGBM$overall, cmRF$overall)
+print(modelCompare)
+```
+
+Based on the above, the *Random Forest model* is selected since it is the most accurate. 
+
+The confusion matrix for the selected model is as below:
+
+```{r}
+print(cmRF)
+```
+The top 10 features of the selected model are:
+
+```{r}
+rfImp <- varImp(mRF, scale=FALSE)
+plot(rfImp, top=10)
+```
+
+
+#4. Prediction of testing outcome
+
+```{r}
+testPred <- predict(mRF, testing)
+testPred
+```
